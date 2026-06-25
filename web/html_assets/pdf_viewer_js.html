@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Flutter PDF.js Viewer</title>
+    <style>
+      body {
+        margin: 0;
+        background: #e4e4e4;
+      }
+      #pdf-container {
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      canvas {
+        margin: 10px 0;
+        background: #fff;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+      }
+    </style>
+
+    <!-- Load pdf.js from CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script>
+      // Tell pdf.js where to find the worker file
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js";
+
+      // This is the function Flutter will call:
+      window.loadPdf = function (url) {
+        pdfjsLib
+          .getDocument(url)
+          .promise.then(function (pdfDoc) {
+            const container = document.getElementById("pdf-container");
+            container.innerHTML = ""; // clear previous content
+
+            let pagesRendered = 0;
+
+            // Loop through all pages and render each one
+            for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
+              pdfDoc.getPage(pageNum).then(function (page) {
+                const viewport = page.getViewport({ scale: 1.5 });
+                const canvas = document.createElement("canvas");
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                container.appendChild(canvas);
+
+                const ctx = canvas.getContext("2d");
+
+                page
+                  .render({
+                    canvasContext: ctx,
+                    viewport: viewport,
+                  })
+                  .promise.then(() => {
+                    // Increment the count of rendered pages
+                    pagesRendered++;
+
+                    // Check if all pages have been rendered
+                    if (pagesRendered === pdfDoc.numPages) {
+                      // Send message to Flutter through postMessage
+                      console.log("onPdfRendered"); // This will be caught by onConsoleMessage in Flutter
+                    }
+                  })
+                  .catch(function (err) {
+                    console.error("Error rendering page", err);
+                  });
+              });
+            }
+          })
+          .catch(function (err) {
+            console.error("Error loading PDF", err);
+          });
+      };
+    </script>
+  </head>
+  <body>
+    <div id="pdf-container"></div>
+  </body>
+</html>

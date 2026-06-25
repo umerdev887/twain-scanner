@@ -1,0 +1,1228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>DOCX Editor</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --ink: #eaf0ff;
+      --muted: #98a2b3;
+      --accent: #5b9aff;
+      --card: #141a33;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial;
+      background: var(--bg);
+      color: var(--ink);
+    }
+
+    /* toolbar */
+    #toolbar {
+      display: flex;
+      gap: 8px;
+      padding: 10px;
+      background: #0d1330;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    button, .btn {
+      background: #1d2647;
+      color: var(--ink);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    button:hover { 
+      background: #22305a; 
+      transform: translateY(-1px);
+    }
+    
+    #btnDownloadDocx {
+      background: #2d4ec7;
+      margin-left: 10px;
+      font-weight: bold;
+    }
+    #btnDownloadDocx:hover {
+      background: #3a5ce7;
+    }
+
+    /* editor container */
+    #editor-wrap {
+      padding: 18px;
+      height: calc(100vh - 60px);
+      overflow: auto;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      background: linear-gradient(180deg, rgba(0,0,0,0.03), transparent);
+    }
+    
+    /* each page */
+    .page {
+      background: white;
+      color: black;
+      padding: 40px;
+      margin: 20px auto;
+      max-width: 800px;
+      min-height: 1123px; /* A4 at 96dpi */
+      box-shadow: 0 0 15px rgba(0,0,0,0.1);
+      position: relative;
+      page-break-after: always;
+      overflow: hidden;
+      border-radius: 4px;
+      white-space: pre-wrap; /* Preserve spaces and line breaks */
+    }
+
+    /* make inner content editable */
+    #editor {
+      width: 100%;
+      min-height: 100%;
+      outline: none;
+      white-space: pre-wrap; /* Preserve spaces and line breaks */
+    }
+
+    /* Constrain images to fit within page width */
+    .page img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      margin: 10px 0;
+    }
+
+    /* small hints */
+    .hint { 
+      font-size: 12px; 
+      color: var(--muted); 
+      margin-left: 8px; 
+    }
+    
+    .divider {
+      height: 24px;
+      width: 1px;
+      background: rgba(255,255,255,0.1);
+      margin: 0 8px;
+    }
+    
+    .toolbar-group {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+  </style>
+</head>
+<body>
+  <!-- toolbar with download button -->
+  <div id="toolbar">
+    <div class="toolbar-group">
+      <button data-cmd="bold" title="Bold (Ctrl+B)"><b>B</b></button>
+      <button data-cmd="italic" title="Italic (Ctrl+I)"><i>I</i></button>
+      <button data-cmd="underline" title="Underline (Ctrl+U)"><u>U</u></button>
+    </div>
+    
+    <div class="divider"></div>
+    
+    <div class="toolbar-group">
+      <button data-cmd="insertUnorderedList" title="Bullet List">• List</button>
+      <button data-cmd="insertOrderedList" title="Numbered List">1. List</button>
+    </div>
+    
+    <div class="divider"></div>
+    
+    <div class="toolbar-group">
+      <button id="h1" title="Heading 1">H1</button>
+      <button id="h2" title="Heading 2">H2</button>
+    </div>
+    
+    <div class="divider"></div>
+    
+    <div class="toolbar-group">
+      <button data-cmd="justifyLeft" title="Align Left">⎡⎣</button>
+      <button data-cmd="justifyCenter" title="Align Center">⎢⎢</button>
+      <button data-cmd="justifyRight" title="Align Right">⎤⎦</button>
+    </div>
+    
+    <div class="divider"></div>
+    
+    <div class="toolbar-group">
+      <button id="btnIndent" title="Increase Indent">→⎢</button>
+      <button id="btnOutdent" title="Decrease Indent">⎢←</button>
+    </div>
+    
+    <div style="flex: 1;"></div>
+    
+    <button id="btnDownloadDocx" title="Download DOCX">Download DOCX</button>
+  </div>
+
+  <!-- editor area -->
+  <div id="editor-wrap">
+    <div id="editor-container" style="width:100%; display:flex; justify-content:center;">
+      <div id="editor" class="page" contenteditable="true">
+        <h1 style="margin-top:0; color: #2d4ec7;">DOCX Editor</h1>
+        <p>This is a simple document editor. You can:</p>
+        <ul>
+          <li>Edit text using the toolbar above</li>
+          <li>Format text with bold, italic, underline</li>
+          <li>Create lists and headings</li>
+          <li>Download your document as a DOCX file</li>
+        </ul>
+        <p>To get started, simply edit this text or load a document via base64.</p>
+        <p class="hint" style="color:#666">Use the Download DOCX button when you're ready to save your work.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- libs -->
+  <script src="https://unpkg.com/jszip/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mammoth@1.7.0/mammoth.browser.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html-docx-js@0.3.1/dist/html-docx.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/docx@7.0.0/build/index.min.js"></script>
+
+  <script>
+    // helpers & references
+    const $ = (sel) => document.querySelector(sel);
+    const editorContainer = $("#editor-container");
+    
+    // Global storage for image data as backup (survives across edits)
+    window.imageBackupStorage = window.imageBackupStorage || {};
+
+    // Base64 -> ArrayBuffer
+    function base64ToArrayBuffer(base64) {
+      const binary = atob(base64);
+      const len = binary.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+      return bytes.buffer;
+    }
+    
+    // Extract indentation from DOCX and apply to HTML elements
+    async function applyIndentationFromDocx(arrayBuffer, pageElement) {
+      try {
+        const zip = await JSZip.loadAsync(arrayBuffer);
+        const docXml = await zip.file("word/document.xml").async("string");
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(docXml, "text/xml");
+        
+        
+        // Helpers
+        const twipsToPx = (tw) => Math.round(parseInt(tw) / 15);
+
+        // Build style indentation map from styles.xml (paragraph styles)
+        const styleIndentByStyleId = {};
+        try {
+          const stylesEntry = await zip.file("word/styles.xml");
+          if (stylesEntry) {
+            const stylesXml = await stylesEntry.async("string");
+            const stylesDoc = parser.parseFromString(stylesXml, "text/xml");
+            const styleNodes = stylesDoc.getElementsByTagName('w:style');
+            for (let i = 0; i < styleNodes.length; i++) {
+              const s = styleNodes[i];
+              const type = s.getAttribute('w:type');
+              if (type !== 'paragraph') continue;
+              const styleId = s.getAttribute('w:styleId');
+              const pPr = s.getElementsByTagName('w:pPr')[0];
+              if (!pPr) continue;
+              const ind = pPr.getElementsByTagName('w:ind')[0];
+              if (!ind) continue;
+              const leftAttr = ind.getAttribute('w:left') || ind.getAttribute('w:start') || ind.getAttribute('left') || ind.getAttribute('start');
+              if (leftAttr && parseInt(leftAttr) > 0) {
+                styleIndentByStyleId[styleId] = parseInt(leftAttr);
+              }
+            }
+          }
+        } catch (e) {
+        }
+
+        // Build numbering indentation map from numbering.xml (numId/ilvl → left)
+        const numberingIndent = {}; // key: `${numId}:${ilvl}` → twips
+        try {
+          const numberingEntry = await zip.file("word/numbering.xml");
+          if (numberingEntry) {
+            const numberingXml = await numberingEntry.async("string");
+            const numberingDoc = parser.parseFromString(numberingXml, "text/xml");
+            const abstractNumNodes = numberingDoc.getElementsByTagName('w:abstractNum');
+            const abstractMap = {}; // abstractNumId -> { ilvl -> leftTwips }
+            for (let i = 0; i < abstractNumNodes.length; i++) {
+              const an = abstractNumNodes[i];
+              const anId = an.getAttribute('w:abstractNumId');
+              if (!anId) continue;
+              abstractMap[anId] = abstractMap[anId] || {};
+              const lvls = an.getElementsByTagName('w:lvl');
+              for (let j = 0; j < lvls.length; j++) {
+                const lvl = lvls[j];
+                const ilvl = lvl.getAttribute('w:ilvl') || j.toString();
+                const pPr = lvl.getElementsByTagName('w:pPr')[0];
+                if (!pPr) continue;
+                const ind = pPr.getElementsByTagName('w:ind')[0];
+                if (!ind) continue;
+                const leftAttr = ind.getAttribute('w:left') || ind.getAttribute('w:start') || ind.getAttribute('left') || ind.getAttribute('start');
+                if (leftAttr && parseInt(leftAttr) > 0) {
+                  abstractMap[anId][ilvl] = parseInt(leftAttr);
+                }
+              }
+            }
+            const numNodes = numberingDoc.getElementsByTagName('w:num');
+            for (let i = 0; i < numNodes.length; i++) {
+              const num = numNodes[i];
+              const numId = num.getAttribute('w:numId');
+              const abstractRef = num.getElementsByTagName('w:abstractNumId')[0];
+              const anId = abstractRef ? abstractRef.getAttribute('w:val') : null;
+              if (!numId || !anId || !abstractMap[anId]) continue;
+              Object.keys(abstractMap[anId]).forEach((ilvl) => {
+                numberingIndent[`${numId}:${ilvl}`] = abstractMap[anId][ilvl];
+              });
+            }
+          }
+        } catch (e) {
+        }
+        
+        // Get all paragraphs from XML
+        const xmlParagraphs = xmlDoc.getElementsByTagName('w:p');
+        // Get all rendered HTML block elements (paragraphs contain images)
+        const htmlElements = pageElement.querySelectorAll('p, h1, h2, h3, h4, h5, h6, div');
+        
+        
+        // First, analyze ALL XML paragraphs to understand structure
+        const xmlParasWithIndent = [];
+        for (let i = 0; i < xmlParagraphs.length; i++) {
+          const xmlPara = xmlParagraphs[i];
+          
+          // Get text content to identify paragraph
+          const textNodes = xmlPara.getElementsByTagName('w:t');
+          let paraText = '';
+          for (let t = 0; t < textNodes.length; t++) {
+            paraText += textNodes[t].textContent || '';
+          }
+          paraText = paraText.trim();
+          
+          // Check if it has an image
+          const hasImage = xmlPara.getElementsByTagName('w:drawing').length > 0 || 
+                          xmlPara.getElementsByTagName('w:pict').length > 0;
+          
+          // Look for paragraph properties
+          const pPr = xmlPara.getElementsByTagName('w:pPr')[0];
+          let leftIndent = 0;
+          let resolvedBy = '';
+          
+              if (pPr) {
+                const ind = pPr.getElementsByTagName('w:ind')[0];
+                if (ind) {
+                  const leftAttr = ind.getAttribute('w:left') || ind.getAttribute('w:start') || ind.getAttribute('left') || ind.getAttribute('start');
+                  if (leftAttr) {
+                    leftIndent = parseInt(leftAttr);
+                    resolvedBy = 'direct';
+                  }
+                }
+
+                // If no direct indent, try paragraph style
+                if (!leftIndent) {
+                  const pStyle = pPr.getElementsByTagName('w:pStyle')[0];
+                  const styleId = pStyle ? (pStyle.getAttribute('w:val') || pStyle.getAttribute('val')) : null;
+                  if (styleId && styleIndentByStyleId[styleId]) {
+                    leftIndent = styleIndentByStyleId[styleId];
+                    resolvedBy = `style:${styleId}`;
+                  }
+                }
+
+                // If still none, try numbering level indent
+                if (!leftIndent) {
+                  const numPr = pPr.getElementsByTagName('w:numPr')[0];
+                  if (numPr) {
+                    const numIdEl = numPr.getElementsByTagName('w:numId')[0];
+                    const ilvlEl = numPr.getElementsByTagName('w:ilvl')[0];
+                    const numId = numIdEl ? (numIdEl.getAttribute('w:val') || numIdEl.getAttribute('val')) : null;
+                    const ilvl = ilvlEl ? (ilvlEl.getAttribute('w:val') || ilvlEl.getAttribute('val') || '0') : '0';
+                    if (numId && numberingIndent[`${numId}:${ilvl}`]) {
+                      leftIndent = numberingIndent[`${numId}:${ilvl}`];
+                      resolvedBy = `numbering:${numId}:${ilvl}`;
+                    }
+                  }
+                }
+
+                // If still none, try default paragraph styles (for paragraphs with pPr but no explicit indent)
+                if (!leftIndent) {
+                  const defaultStyles = ['Normal', 'Default', 'Body Text', 'ListParagraph'];
+                  for (const styleName of defaultStyles) {
+                    if (styleIndentByStyleId[styleName]) {
+                      leftIndent = styleIndentByStyleId[styleName];
+                      resolvedBy = `default-style:${styleName}`;
+                      break;
+                    }
+                  }
+                  
+                  // If still none, try the first available paragraph style with indentation
+                  if (!leftIndent) {
+                    const styleIds = Object.keys(styleIndentByStyleId);
+                    if (styleIds.length > 0) {
+                      leftIndent = styleIndentByStyleId[styleIds[0]];
+                      resolvedBy = `fallback-style:${styleIds[0]}`;
+                    }
+                  }
+                }
+              } else {
+            // No w:pPr - try default styles (Normal, etc.)
+            // Check if any default paragraph style has indentation
+            const defaultStyles = ['Normal', 'Default', 'Body Text'];
+            for (const styleName of defaultStyles) {
+              if (styleIndentByStyleId[styleName]) {
+                leftIndent = styleIndentByStyleId[styleName];
+                resolvedBy = `default-style:${styleName}`;
+                break;
+              }
+            }
+            
+            // If still none, try the first available paragraph style with indentation
+            if (!leftIndent) {
+              const styleIds = Object.keys(styleIndentByStyleId);
+              if (styleIds.length > 0) {
+                leftIndent = styleIndentByStyleId[styleIds[0]];
+                resolvedBy = `fallback-style:${styleIds[0]}`;
+              }
+            }
+          }
+
+          // Final fallback: infer indent from leading whitespace/tabs in runs
+          if (!leftIndent) {
+            let spaceCount = 0;
+            let tabCount = 0;
+            let reachedContent = false;
+            const runNodes = xmlPara.getElementsByTagName('w:r');
+            for (let r = 0; r < runNodes.length && !reachedContent; r++) {
+              const rNode = runNodes[r];
+              // Count tabs in this run
+              const tabNodes = rNode.getElementsByTagName('w:tab');
+              if (tabNodes && tabNodes.length > 0) {
+                tabCount += tabNodes.length;
+              }
+              // Check text in this run
+              const tNodes = rNode.getElementsByTagName('w:t');
+              for (let ti = 0; ti < tNodes.length && !reachedContent; ti++) {
+                const tNode = tNodes[ti];
+                const text = (tNode.textContent || '');
+                if (text.length === 0) continue;
+                // Count leading spaces until first non-space
+                for (let c = 0; c < text.length; c++) {
+                  const ch = text[c];
+                  if (ch === ' ' || ch === '\u00A0') {
+                    spaceCount++;
+                  } else {
+                    reachedContent = true;
+                    break;
+                  }
+                }
+              }
+            }
+            if (spaceCount > 0 || tabCount > 0) {
+              // Approximate: 1 tab = 36px, 1 space = 6px
+              const px = (tabCount * 36) + (spaceCount * 6);
+              leftIndent = px * 15; // convert to twips for consistency
+              resolvedBy = `whitespace tabs:${tabCount} spaces:${spaceCount}`;
+            }
+          }
+          
+          
+          if (leftIndent > 0) {
+            xmlParasWithIndent.push({
+              index: i,
+              leftAttr: leftIndent,
+              hasImage: hasImage,
+              text: paraText,
+              resolvedBy
+            });
+          }
+        }
+        
+        
+        // Now match XML paragraphs with indent to HTML elements
+        let appliedCount = 0;
+        const matchedElements = new Set(); // Track which HTML elements have been matched
+        
+        for (const xmlInfo of xmlParasWithIndent) {
+          const leftPx = twipsToPx(xmlInfo.leftAttr);
+          
+          // Find matching HTML element that hasn't been matched yet
+          let matchedHtml = null;
+          
+          if (xmlInfo.hasImage) {
+            // Find HTML element containing an image that hasn't been matched
+            for (const htmlEl of htmlElements) {
+              if (!matchedElements.has(htmlEl) && htmlEl.querySelector('img')) {
+                matchedHtml = htmlEl;
+                break;
+              }
+            }
+          } else if (xmlInfo.text) {
+            // Match by text content - find element that hasn't been matched
+            for (const htmlEl of htmlElements) {
+              if (!matchedElements.has(htmlEl)) {
+                const htmlText = htmlEl.textContent.trim();
+                if (htmlText.includes(xmlInfo.text) || xmlInfo.text.includes(htmlText)) {
+                  matchedHtml = htmlEl;
+                  break;
+                }
+              }
+            }
+          }
+          
+          if (matchedHtml) {
+            matchedHtml.style.marginLeft = `${leftPx}px`;
+            matchedElements.add(matchedHtml); // Mark as matched
+            appliedCount++;
+          } else {
+          }
+        }
+        
+        
+      } catch (err) {
+        // Non-fatal - document will still load
+      }
+    }
+
+    // Render ArrayBuffer
+    async function renderArrayBuffer(arrayBuffer) {
+      try {
+        // Clear old backups before loading new document
+        window.imageBackupStorage = {};
+        
+        const options = {
+          convertImage: mammoth.images.inline((image) =>
+            image.read("base64").then((imgBuf) => ({ src: "data:" + image.contentType + ";base64," + imgBuf }))
+          )
+        };
+
+        const result = await mammoth.convertToHtml({ arrayBuffer }, options);
+        let html = result.value || "<p>[Empty document]</p>";
+        
+        // Remove Aspose watermark text
+        const asposeWatermarks = [
+          /Created with an evaluation copy of Aspose\.Words\.\s*To remove all limitations,?\s*you can use Free Temporary License\s*https?:\/\/products\.aspose\.com\/words\/temporary-license\/?/gi,
+          /Created with an evaluation copy of Aspose\.Words\./gi,
+          /To remove all limitations,?\s*you can use Free Temporary License/gi,
+          /https?:\/\/products\.aspose\.com\/words\/temporary-license\/?/gi
+        ];
+        
+        asposeWatermarks.forEach(pattern => {
+          html = html.replace(pattern, '');
+        });
+        
+        html = html.replace(/<p>\s*<strong>\s*<\/strong>\s*<\/p>/gi, '');
+        html = html.replace(/<p>\s*<a[^>]*>\s*<strong>\s*<\/strong>\s*<\/a>\s*<\/p>/gi, '');
+        html = html.replace(/<a[^>]*>\s*<strong>\s*https?:\/\/products\.aspose\.com\/words\/temporary-license\/?<\/strong>\s*<\/a>/gi, '');
+
+        // Wrap entire HTML in a single page
+        editorContainer.innerHTML = "";
+        
+        const page = document.createElement('div');
+        page.className = 'page';
+        page.innerHTML = html;
+        page.setAttribute('contenteditable', 'true');
+        editorContainer.appendChild(page);
+        
+        // Extract and apply indentation from original DOCX
+        await applyIndentationFromDocx(arrayBuffer, page);
+        
+        // Store original dimensions for all images to preserve them across edits
+        const images = page.querySelectorAll('img');
+        
+        // Function to store image dimensions
+        const storeImageDimensions = (img) => {
+          // Wait for next frame to ensure image is in DOM
+          requestAnimationFrame(() => {
+            const width = img.naturalWidth || img.width || img.clientWidth || 400;
+            const height = img.naturalHeight || img.height || img.clientHeight || 300;
+            
+            // Store in multiple places for redundancy
+            img.dataset.originalWidth = width;
+            img.dataset.originalHeight = height;
+            
+            // Also set as HTML attributes (these persist through HTML serialization)
+            if (!img.hasAttribute('width') || img.getAttribute('width') != width) {
+              img.setAttribute('width', width);
+            }
+            if (!img.hasAttribute('height') || img.getAttribute('height') != height) {
+              img.setAttribute('height', height);
+            }
+          });
+        };
+        
+        images.forEach((img, index) => {
+          img.contentEditable = 'false';
+          img.draggable = false;
+          
+          // Add style to make it clear they're special
+          img.style.userSelect = 'none';
+          img.style.cursor = 'default';
+          
+          // Assign unique ID if not present
+          if (!img.id) {
+            img.id = `img_backup_${Date.now()}_${index}`;
+          }
+          
+          // Backup image src in global storage
+          const src = img.src || img.getAttribute('src');
+          if (src && src.startsWith('data:')) {
+            window.imageBackupStorage[img.id] = src;
+          }
+          
+          // Try to store dimensions immediately if image already loaded
+          if (img.complete && img.naturalWidth > 0) {
+            storeImageDimensions(img);
+          } else {
+            // If not loaded, wait for load event
+            img.addEventListener('load', function() {
+              storeImageDimensions(this);
+            });
+            
+            // Also try after a short delay as fallback
+            setTimeout(() => {
+              if (!img.dataset.originalWidth) {
+                storeImageDimensions(img);
+              }
+            }, 100);
+          }
+          
+          // Prevent image from being deleted by backspace
+          img.addEventListener('keydown', function(e) {
+            if (e.key === 'Backspace' || e.key === 'Delete') {
+              e.stopPropagation();
+            }
+          });
+        });
+
+      } catch (err) {
+        console.error("renderArrayBuffer error", err);
+        alert("Failed to render document: " + (err.message || err));
+      }
+    }
+
+    // Toolbar commands
+    document.querySelectorAll("[data-cmd]").forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const editor = document.querySelector('.page[contenteditable="true"]');
+        if (!editor) return;
+        editor.focus();
+        const cmd = btn.dataset.cmd;
+        document.execCommand(cmd, false, null);
+      });
+    });
+    
+    $("#h1").addEventListener('click', (e) => {
+      e.preventDefault();
+      const editor = document.querySelector('.page[contenteditable="true"]');
+      if (!editor) return;
+      editor.focus();
+      
+      // Check if current selection is already H1
+      const selection = window.getSelection();
+      const parentElement = selection.anchorNode?.parentElement;
+      const isH1 = parentElement?.tagName === 'H1' || parentElement?.closest('h1');
+      
+      // Toggle: if already H1, convert to paragraph; otherwise apply H1
+      document.execCommand('formatBlock', false, isH1 ? 'p' : 'h1');
+    });
+    
+    $("#h2").addEventListener('click', (e) => {
+      e.preventDefault();
+      const editor = document.querySelector('.page[contenteditable="true"]');
+      if (!editor) return;
+      editor.focus();
+      
+      // Check if current selection is already H2
+      const selection = window.getSelection();
+      const parentElement = selection.anchorNode?.parentElement;
+      const isH2 = parentElement?.tagName === 'H2' || parentElement?.closest('h2');
+      
+      // Toggle: if already H2, convert to paragraph; otherwise apply H2
+      document.execCommand('formatBlock', false, isH2 ? 'p' : 'h2');
+    });
+    
+    // Indent button - increase left margin
+    $("#btnIndent").addEventListener('click', (e) => {
+      e.preventDefault();
+      const editor = document.querySelector('.page[contenteditable="true"]');
+      if (!editor) return;
+      editor.focus();
+      
+      const selection = window.getSelection();
+      if (!selection.anchorNode) return;
+      
+      // Find the closest block element (p, div, h1, h2, etc.)
+      let blockElement = selection.anchorNode.nodeType === Node.TEXT_NODE 
+        ? selection.anchorNode.parentElement 
+        : selection.anchorNode;
+      
+      while (blockElement && !['P', 'DIV', 'H1', 'H2', 'H3', 'LI'].includes(blockElement.tagName)) {
+        blockElement = blockElement.parentElement;
+      }
+      
+      if (blockElement && blockElement.closest('.page')) {
+        // Get current margin-left
+        const currentStyle = window.getComputedStyle(blockElement);
+        const currentMargin = parseFloat(currentStyle.marginLeft) || 0;
+        
+        // Increase by 40px (standard indent)
+        const newMargin = currentMargin + 40;
+        blockElement.style.marginLeft = `${newMargin}px`;
+        
+        console.log(`✅ Indent applied: ${newMargin}px to ${blockElement.tagName}`);
+      }
+    });
+    
+    // Outdent button - decrease left margin
+    $("#btnOutdent").addEventListener('click', (e) => {
+      e.preventDefault();
+      const editor = document.querySelector('.page[contenteditable="true"]');
+      if (!editor) return;
+      editor.focus();
+      
+      const selection = window.getSelection();
+      if (!selection.anchorNode) return;
+      
+      // Find the closest block element
+      let blockElement = selection.anchorNode.nodeType === Node.TEXT_NODE 
+        ? selection.anchorNode.parentElement 
+        : selection.anchorNode;
+      
+      while (blockElement && !['P', 'DIV', 'H1', 'H2', 'H3', 'LI'].includes(blockElement.tagName)) {
+        blockElement = blockElement.parentElement;
+      }
+      
+      if (blockElement && blockElement.closest('.page')) {
+        // Get current margin-left
+        const currentStyle = window.getComputedStyle(blockElement);
+        const currentMargin = parseFloat(currentStyle.marginLeft) || 0;
+        
+        // Decrease by 40px (but don't go negative)
+        const newMargin = Math.max(0, currentMargin - 40);
+        
+        if (newMargin === 0) {
+          blockElement.style.marginLeft = '';
+        } else {
+          blockElement.style.marginLeft = `${newMargin}px`;
+        }
+        
+        console.log(`✅ Outdent applied: ${newMargin}px to ${blockElement.tagName}`);
+      }
+    });
+
+    // Download edited content as DOCX
+ // Download edited content as DOCX
+// Download edited content as DOCX
+// $("#btnDownloadDocx").addEventListener("click", () => {
+//   try {
+//     // Clone editor content
+//     const editorClone = editorContainer.cloneNode(true);
+
+//     // Collect all .page innerHTML
+//     const pages = editorClone.querySelectorAll(".page");
+//     let combinedHTML = "";
+
+//     if (pages.length > 0) {
+//       pages.forEach((page) => {
+//         combinedHTML += page.innerHTML;
+//       });
+//     } else {
+//       // fallback: export full editor content if no .page wrappers exist
+//       combinedHTML = editorClone.innerHTML;
+//     }
+
+//     // Wrap with body that has inline-safe defaults
+//     const fullHtml = `
+//       <!DOCTYPE html>
+//       <html>
+//         <head><meta charset="utf-8"></head>
+//         <body style="font-family: Arial, sans-serif; font-size:14px; color:#000; line-height:1.5;">
+//           ${combinedHTML}
+//         </body>
+//       </html>
+//     `;
+
+//     // Convert to docx
+//     const converted = window.htmlDocx.asBlob(fullHtml);
+//     saveAs(converted, "document.docx");
+
+//     // Feedback on button
+//     const originalText = $("#btnDownloadDocx").textContent;
+//     $("#btnDownloadDocx").textContent = "Downloaded!";
+//     setTimeout(() => {
+//       $("#btnDownloadDocx").textContent = originalText;
+//     }, 1500);
+//   } catch (err) {
+//     console.error("Export failed", err);
+//     alert("Export failed: " + (err.message || err));
+//   }
+// });
+
+// Helper function to get text alignment from a node
+function getAlignment(node) {
+  const { AlignmentType } = docx;
+  const style = node.style.textAlign || window.getComputedStyle(node).textAlign;
+  
+  switch(style) {
+    case 'left': return AlignmentType.LEFT;
+    case 'center': return AlignmentType.CENTER;
+    case 'right': return AlignmentType.RIGHT;
+    case 'justify': return AlignmentType.JUSTIFIED;
+    default: return null;
+  }
+}
+
+// Helper function to get indentation from a node (in twips: 1 twip = 1/20 pt)
+function getIndentation(node) {
+  const computedStyle = window.getComputedStyle(node);
+  
+  // Get all possible left spacing values
+  const marginLeft = parseFloat(computedStyle.marginLeft) || 0;
+  const paddingLeft = parseFloat(computedStyle.paddingLeft) || 0;
+  const textIndent = parseFloat(computedStyle.textIndent) || 0;
+  
+  // Also check inline style attribute directly
+  const inlineStyle = node.getAttribute('style') || '';
+  let inlineLeftSpacing = 0;
+  
+  // Parse inline style for margin-left or padding-left
+  const marginMatch = inlineStyle.match(/margin-left:\s*([0-9.]+)px/);
+  const paddingMatch = inlineStyle.match(/padding-left:\s*([0-9.]+)px/);
+  const indentMatch = inlineStyle.match(/text-indent:\s*([0-9.]+)px/);
+  
+  if (marginMatch) inlineLeftSpacing = Math.max(inlineLeftSpacing, parseFloat(marginMatch[1]));
+  if (paddingMatch) inlineLeftSpacing = Math.max(inlineLeftSpacing, parseFloat(paddingMatch[1]));
+  if (indentMatch) inlineLeftSpacing = Math.max(inlineLeftSpacing, parseFloat(indentMatch[1]));
+  
+  // Use the maximum value from all sources
+  const totalLeftPx = Math.max(marginLeft, paddingLeft, textIndent, inlineLeftSpacing);
+  
+  if (totalLeftPx <= 0) {
+    return null;
+  }
+  
+  // Convert pixels to twips (1px ≈ 15 twips at 96 DPI)
+  const leftTwips = Math.round(totalLeftPx * 15);
+  
+  return {
+    left: leftTwips
+  };
+}
+
+function parseHtmlToDocx(htmlString) {
+  const { Paragraph, TextRun, HeadingLevel, ImageRun } = docx;
+  const tempDiv = document.createElement("div");
+  tempDiv.innerHTML = htmlString;
+
+  const children = [];
+
+  function processInline(node, formatting = {}) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      // Preserve spaces (replace non-breaking spaces with regular spaces)
+      let text = node.textContent;
+      // Convert non-breaking spaces to regular spaces
+      text = text.replace(/\u00A0/g, ' ');
+      
+      // Don't trim - preserve leading/trailing spaces
+      // Create TextRun with accumulated formatting
+      return [new TextRun({ 
+        text: text,
+        bold: formatting.bold || false,
+        italics: formatting.italics || false,
+        underline: formatting.underline ? {} : undefined
+      })];
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return [];
+
+    // Handle images in inline content
+    if (node.tagName === "IMG") {
+      return []; // Images handled at block level
+    }
+
+    // Update formatting based on current tag
+    const newFormatting = { ...formatting };
+    if (node.tagName === "B" || node.tagName === "STRONG") {
+      newFormatting.bold = true;
+    }
+    if (node.tagName === "I" || node.tagName === "EM") {
+      newFormatting.italics = true;
+    }
+    if (node.tagName === "U") {
+      newFormatting.underline = true;
+    }
+
+    // Process children with accumulated formatting
+    let runs = [];
+    node.childNodes.forEach(child => {
+      runs.push(...processInline(child, newFormatting));
+    });
+
+    return runs;
+  }
+
+  function processNode(node, listLevel = 0, isNumbered = false) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      // Handle text nodes directly - wrap in paragraph
+      const text = node.textContent.trim();
+      if (text) {
+        children.push(new Paragraph({ children: [new TextRun({ text: text })] }));
+      }
+      return;
+    }
+    
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+
+    const tag = node.tagName;
+
+    // Handle images - process them in their natural position
+    if (tag === "IMG") {
+      let src = node.src || node.getAttribute('src');
+      
+       
+      // Try to restore from backup if src is missing or invalid
+      if ((!src || !src.startsWith('data:')) && node.id && window.imageBackupStorage[node.id]) {
+        src = window.imageBackupStorage[node.id];
+        node.src = src;
+      }
+      
+      if (!src || !src.startsWith('data:')) {
+        return;
+      }
+      
+      try {
+        const srcParts = src.split(',');
+        if (srcParts.length < 2) return;
+        
+        const base64Data = srcParts[1];
+        if (!base64Data || base64Data.length === 0) return;
+        
+        let base64Buffer;
+        try {
+          base64Buffer = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+          if (base64Buffer.length === 0) return;
+        } catch (decodeError) {
+          return;
+        }
+        
+        const actualWidth = parseInt(node.dataset.originalWidth) || 
+                           node.naturalWidth || 
+                           parseInt(node.getAttribute('width')) ||
+                           node.clientWidth ||
+                           node.width || 
+                           400;
+        const actualHeight = parseInt(node.dataset.originalHeight) || 
+                            node.naturalHeight || 
+                            parseInt(node.getAttribute('height')) ||
+                            node.clientHeight ||
+                            node.height || 
+                            300;
+        
+        let finalWidth = Math.min(actualWidth, 400);
+        let finalHeight = actualHeight;
+        
+        if (actualWidth > 400) {
+          const aspectRatio = actualHeight / actualWidth;
+          finalHeight = Math.floor(finalWidth * aspectRatio);
+        } else {
+          finalWidth = actualWidth;
+          finalHeight = actualHeight;
+        }
+        
+        if (!base64Buffer || base64Buffer.length === 0) return;
+        
+        const imageRun = new ImageRun({
+          data: base64Buffer,
+          transformation: {
+            width: finalWidth,
+            height: finalHeight
+          }
+        });
+        
+        // Get indentation from the parent paragraph (not the img element itself)
+        const parentParagraph = node.closest('p, div, h1, h2, h3, h4, h5, h6');
+        const indentation = parentParagraph ? getIndentation(parentParagraph) : null;
+        
+        const imageParagraphOptions = {
+          children: [imageRun],
+          spacing: {
+            before: 200, // 10pt space before image
+            after: 200   // 10pt space after image
+          }
+        };
+        if (indentation) {
+          imageParagraphOptions.indent = indentation;
+        }
+        children.push(new Paragraph(imageParagraphOptions));
+      } catch (err) {
+        // Silently skip problematic images
+      }
+      return;
+    }
+
+    // Headings
+    if (tag === "H1") {
+      const alignment = getAlignment(node);
+      const indentation = getIndentation(node);
+      const h1Options = {
+        children: processInline(node),
+        heading: HeadingLevel.HEADING_1
+      };
+      if (alignment) {
+        h1Options.alignment = alignment;
+      }
+      if (indentation) {
+        h1Options.indent = indentation;
+      }
+      children.push(new Paragraph(h1Options));
+      return;
+    }
+    if (tag === "H2") {
+      const alignment = getAlignment(node);
+      const indentation = getIndentation(node);
+      const h2Options = {
+        children: processInline(node),
+        heading: HeadingLevel.HEADING_2
+      };
+      if (alignment) {
+        h2Options.alignment = alignment;
+      }
+      if (indentation) {
+        h2Options.indent = indentation;
+      }
+      children.push(new Paragraph(h2Options));
+      return;
+    }
+
+    // DIVs - check if they contain block elements (like H1, H2, P, UL, OL)
+    if (tag === "DIV") {
+      const hasBlockChildren = Array.from(node.children).some(child => 
+        ['H1', 'H2', 'H3', 'P', 'UL', 'OL', 'DIV'].includes(child.tagName)
+      );
+      
+      if (hasBlockChildren) {
+        // DIV contains block elements, process children individually
+        node.childNodes.forEach(child => processNode(child, listLevel, isNumbered));
+        return;
+      } else {
+        // DIV might contain inline elements or images - process children
+        // Check if it has image children
+        const hasImages = node.querySelector('img') !== null;
+        if (hasImages) {
+          // Process all children in order (including images)
+          node.childNodes.forEach(child => processNode(child, listLevel, isNumbered));
+          return;
+        }
+        
+        // Regular inline paragraph (Enter key press)
+        const inlineChildren = processInline(node);
+        if (inlineChildren.length > 0 || node.childNodes.length === 0) {
+          const alignment = getAlignment(node);
+          const indentation = getIndentation(node);
+          const paragraphOptions = { 
+            children: inlineChildren.length > 0 ? inlineChildren : [new TextRun({ text: "" })]
+          };
+          if (alignment) {
+            paragraphOptions.alignment = alignment;
+          }
+          if (indentation) {
+            paragraphOptions.indent = indentation;
+          }
+          children.push(new Paragraph(paragraphOptions));
+        }
+        return;
+      }
+    }
+    
+    // Paragraphs
+    if (tag === "P") {
+      // Check if paragraph contains images
+      const hasImages = node.querySelector('img') !== null;
+      if (hasImages) {
+        // Process children in order (text and images)
+        node.childNodes.forEach(child => processNode(child, listLevel, isNumbered));
+        return;
+      }
+      
+      // Regular text paragraph
+      const inlineChildren = processInline(node);
+      if (inlineChildren.length > 0 || node.childNodes.length === 0) {
+        const alignment = getAlignment(node);
+        const indentation = getIndentation(node);
+        const paragraphOptions = { 
+          children: inlineChildren.length > 0 ? inlineChildren : [new TextRun({ text: "" })]
+        };
+        if (alignment) {
+          paragraphOptions.alignment = alignment;
+        }
+        if (indentation) {
+          paragraphOptions.indent = indentation;
+        }
+        children.push(new Paragraph(paragraphOptions));
+      }
+      return;
+    }
+
+    // Line breaks
+    if (tag === "BR") {
+      children.push(new Paragraph({ children: [new TextRun({ text: "" })] }));
+      return;
+    }
+
+    // Lists
+    if (tag === "UL" || tag === "OL") {
+      const numbered = tag === "OL";
+      node.querySelectorAll("li").forEach(li => processNode(li, listLevel, numbered));
+      return;
+    }
+
+    if (tag === "LI") {
+      const indentation = getIndentation(node);
+      const liOptions = {
+        children: processInline(node),
+        bullet: !isNumbered ? { level: listLevel } : undefined,
+        numbering: isNumbered ? { reference: "numbered-list", level: listLevel } : undefined,
+      };
+      if (indentation) {
+        liOptions.indent = indentation;
+      }
+      children.push(new Paragraph(liOptions));
+      return;
+    }
+
+    // Default: process children in their natural order
+    node.childNodes.forEach(child => processNode(child, listLevel, isNumbered));
+  }
+
+  tempDiv.childNodes.forEach(node => processNode(node, 0, false));
+  return children;
+}
+
+// Global variable to store exported DOCX base64 (fallback for Flutter Web)
+window.docxExportedBase64 = null;
+
+// Function to export DOCX and send to Flutter via callback
+window.requestDocxExport = async function() {
+  try {
+    if (!window.docx) return;
+
+    const { Document, Packer } = docx;
+    
+    
+    // CRITICAL: Re-backup all images before export to ensure they're in storage
+    const liveImages = editorContainer.querySelectorAll('img');
+    liveImages.forEach((img, index) => {
+      const src = img.src || img.getAttribute('src');
+      if (src && src.startsWith('data:')) {
+        if (!img.id) {
+          img.id = `img_backup_${Date.now()}_${index}`;
+        }
+        window.imageBackupStorage[img.id] = src;
+      }
+    });
+    
+    const html = editorContainer.innerHTML;
+    
+    // Debug: Show a sample of the HTML structure
+    
+    const paragraphs = parseHtmlToDocx(html);
+
+    // Create document with numbering support for lists
+    // Debug: Count paragraphs with indentation
+    const paragraphsWithIndent = paragraphs.filter(p => p.options && p.options.indent);
+    
+    const doc = new Document({ 
+      numbering: {
+        config: [
+          {
+            reference: "numbered-list",
+            levels: [
+              {
+                level: 0,
+                format: "decimal",
+                text: "%1.",
+                alignment: docx.AlignmentType.LEFT,
+              },
+            ],
+          },
+        ],
+      },
+      sections: [{ children: paragraphs }] 
+    });
+
+    const blob = await Packer.toBlob(doc);
+    
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64 = reader.result.split(',')[1];
+      window.docxExportedBase64 = base64;
+      
+      if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+        window.flutter_inappwebview.callHandler('sendDocxBase64', base64);
+      }
+    };
+    reader.onerror = () => {
+      window.docxExportedBase64 = 'ERROR';
+    };
+    reader.readAsDataURL(blob);
+  } catch (err) {
+    window.docxExportedBase64 = 'ERROR';
+  }
+};
+
+// Export function (for download button)
+$("#btnDownloadDocx").addEventListener("click", () => {
+  try {
+    const { Document, Packer } = docx;
+    const html = editorContainer.innerHTML;
+
+    const paragraphs = parseHtmlToDocx(html);
+
+    const doc = new Document({ sections: [{ children: paragraphs }] });
+
+    Packer.toBlob(doc).then(blob => {
+      saveAs(blob, "document.docx");
+
+      const originalText = $("#btnDownloadDocx").textContent;
+      $("#btnDownloadDocx").textContent = "Downloaded!";
+      setTimeout(() => {
+        $("#btnDownloadDocx").textContent = originalText;
+      }, 1500);
+    });
+
+  } catch (err) {
+    console.error(err);
+    alert("Export failed: " + (err.message || err));
+  }
+});
+
+
+
+    // Flutter -> JS entry: load base64 string
+    window.loadDocFromFlutter = async function(base64) {
+      if (!base64) return;
+      try {
+        const buf = base64ToArrayBuffer(base64);
+        await renderArrayBuffer(buf);
+      } catch (err) {
+        console.error("loadDocFromFlutter error", err);
+        alert("Failed to load document from Flutter: " + (err.message || err));
+      }
+    };
+
+    // Add keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+        switch(e.key) {
+          case 'b': e.preventDefault(); document.execCommand('bold'); break;
+          case 'i': e.preventDefault(); document.execCommand('italic'); break;
+          case 'u': e.preventDefault(); document.execCommand('underline'); break;
+        }
+      }
+    });
+  </script>
+</body>
+</html>
+</html>

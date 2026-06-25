@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>DOC/DOCX Preview</title>
+
+    <style>
+      body {
+        margin: 0;
+        background: #0b1020;
+        font-family: system-ui, sans-serif;
+        color: #eaf0ff;
+      }
+
+      /* #editor-wrap {
+      padding: 20px;
+      height: 100vh;
+      overflow: auto;
+      background: linear-gradient(180deg, rgba(0, 0, 0, 0.03), transparent);
+    } */
+
+      /* .docx-wrapper {
+      margin: 20px auto;
+      padding: 30px;
+      background: white;
+      color: black;
+      max-width: 800px;
+      box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+      border-radius: 6px;
+    } */
+
+      .docx {
+        font-family: Calibri, sans-serif;
+        font-size: 14px;
+        line-height: 1.6;
+      }
+
+      /* Don't override left margins - only set top/bottom */
+      .docx p {
+        margin-top: 0.5em;
+        margin-bottom: 0.5em;
+      }
+
+      /* Constrain images to fit within page width - same as editing screen */
+      /* Use !important on only non-positioning properties to preserve indentation */
+      .docx img,
+      .docx-wrapper img {
+        max-width: 100% !important;
+        height: auto !important;
+        display: block;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="editor-wrap">
+      <div id="editor-container" class="docx-wrapper">
+        <div id="doc-content" class="docx">Loading document...</div>
+      </div>
+    </div>
+
+    <!-- Libraries -->
+    <script src="https://unpkg.com/jszip/dist/jszip.min.js"></script>
+    <script src="https://unpkg.com/docx-preview/dist/docx-preview.min.js"></script>
+
+    <script>
+      const editorContainer = document.getElementById("editor-container");
+
+      // Helper: Convert base64 → ArrayBuffer
+      function base64ToArrayBuffer(base64) {
+        const binary = atob(base64);
+        const len = binary.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+        return bytes.buffer;
+      }
+
+      // Render DOCX files
+      async function renderDocx(arrayBuffer) {
+        try {
+          editorContainer.innerHTML = "";
+
+          // Render using docx-preview library
+          await docx.renderAsync(arrayBuffer, editorContainer, null, {
+            className: "docx",
+            inWrapper: true,
+            ignoreWidth: false,
+            ignoreHeight: false,
+            breakPages: false,
+            renderHeaders: true,
+            renderFootnotes: true,
+            useBase64URL: true,
+            experimental: true, // Enable experimental features for better formatting
+          });
+
+          // Remove Aspose watermark
+          const asposeTexts = editorContainer.querySelectorAll("p, strong, a");
+          asposeTexts.forEach((el) => {
+            if (
+              el.textContent &&
+              (el.textContent.includes(
+                "Created with an evaluation copy of Aspose.Words",
+              ) ||
+                el.textContent.includes(
+                  "https://products.aspose.com/words/temporary-license",
+                ))
+            ) {
+              el.remove();
+            }
+          });
+
+          // Post-process: Extract and apply indentation from DOCX XML
+          await applyIndentationFromDocx(arrayBuffer);
+
+          // Additional pass: ensure all existing inline styles with margins are preserved
+          setTimeout(() => {
+            const allElements = editorContainer.querySelectorAll("*");
+
+            allElements.forEach((el) => {
+              const style = el.getAttribute("style");
+              if (
+                style &&
+                (style.includes("margin-left") ||
+                  style.includes("padding-left") ||
+                  style.includes("text-indent"))
+              ) {
+                // Force the style to take precedence
+                el.style.cssText = style + "; display: block;";
+              }
+            });
+          }, 100);
+        } catch (err) {
+          console.error("renderDocx error", err);
+          editorContainer.innerHTML =
+            '<p style="color: red;">⚠️ Failed to render DOCX document.</p>';
+        }
+      }
+
+      // Extract indentation information from DOCX and apply it to rendered HTML
+      async function applyIndentationFromDocx(arrayBuffer) {
+        try {
+          const zip = await JSZip.loadAsync(arrayBuffer);
+          const docXml = await zip.file("word/document.xml").async("string");
+          const parser = new DOMParser();
+          const xmlDoc = parser.parseFromString(docXml, "text/xml");
+
+          // Helpers
+          const twipsToPx = (tw) => Math.round(parseInt(tw) / 15);
+
+          // Build style indentation map from styles.xml (paragraph styles)
+          const styleIndentByStyleId = {};
+          try {
+            const stylesEntry = await zip.file("word/styles.xml");
+            if (stylesEntry) {
+              const stylesXml = await stylesEntry.async("string");
+              const stylesDoc = parser.parseFromString(stylesXml, "text/xml");
+              const styleNodes = stylesDoc.getElementsByTagName("w:style");
+              for (let i = 0; i < styleNodes.length; i++) {
+                const s = styleNodes[i];
+                const type = s.getAttribute("w:type");
+                if (type !== "paragraph") continue;
+                const styleId = s.getAttribute("w:styleId");
+                const pPr = s.getElementsByTagName("w:pPr")[0];
+                if (!pPr) continue;
+                const ind = pPr.getElementsByTagName("w:ind")[0];
+                if (!ind) continue;
+                const leftAttr =
+                  ind.getAttribute("w:left") ||
+                  ind.getAttribute("w:start") ||
+                  ind.getAttribute("left") ||
+                  ind.getAttribute("start");
+                if (leftAttr && parseInt(leftAttr) > 0) {
+                  styleIndentByStyleId[styleId] = parseInt(leftAttr);
+                }
+              }
+            }
+          } catch (e) {}
+
+          // Build numbering indentation map from numbering.xml (numId/ilvl → left)
+          const numberingIndent = {}; // key: `${numId}:${ilvl}` → twips
+          try {
+            const numberingEntry = await zip.file("word/numbering.xml");
+            if (numberingEntry) {
+              const numberingXml = await numberingEntry.async("string");
+              const numberingDoc = parser.parseFromString(
+                numberingXml,
+                "text/xml",
+              );
+              const abstractNumNodes =
+                numberingDoc.getElementsByTagName("w:abstractNum");
+              const abstractMap = {}; // abstractNumId -> { ilvl -> leftTwips }
+              for (let i = 0; i < abstractNumNodes.length; i++) {
+                const an = abstractNumNodes[i];
+                const anId = an.getAttribute("w:abstractNumId");
+                if (!anId) continue;
+                abstractMap[anId] = abstractMap[anId] || {};
+                const lvls = an.getElementsByTagName("w:lvl");
+                for (let j = 0; j < lvls.length; j++) {
+                  const lvl = lvls[j];
+                  const ilvl = lvl.getAttribute("w:ilvl") || j.toString();
+                  const pPr = lvl.getElementsByTagName("w:pPr")[0];
+                  if (!pPr) continue;
+                  const ind = pPr.getElementsByTagName("w:ind")[0];
+                  if (!ind) continue;
+                  const leftAttr =
+                    ind.getAttribute("w:left") ||
+                    ind.getAttribute("w:start") ||
+                    ind.getAttribute("left") ||
+                    ind.getAttribute("start");
+                  if (leftAttr && parseInt(leftAttr) > 0) {
+                    abstractMap[anId][ilvl] = parseInt(leftAttr);
+                  }
+                }
+              }
+              const numNodes = numberingDoc.getElementsByTagName("w:num");
+              for (let i = 0; i < numNodes.length; i++) {
+                const num = numNodes[i];
+                const numId = num.getAttribute("w:numId");
+                const abstractRef =
+                  num.getElementsByTagName("w:abstractNumId")[0];
+                const anId = abstractRef
+                  ? abstractRef.getAttribute("w:val")
+                  : null;
+                if (!numId || !anId || !abstractMap[anId]) continue;
+                Object.keys(abstractMap[anId]).forEach((ilvl) => {
+                  numberingIndent[`${numId}:${ilvl}`] = abstractMap[anId][ilvl];
+                });
+              }
+            }
+          } catch (e) {}
+
+          // Get all paragraphs from XML
+          const paragraphs = xmlDoc.getElementsByTagName("w:p");
+
+          // Get all rendered elements - try to get all block-level elements
+          const renderedParagraphs = editorContainer.querySelectorAll(
+            "p, h1, h2, h3, h4, h5, h6, div.paragraph, section > *",
+          );
+
+          // Create a map of indentation data from XML
+          const indentMap = [];
+          for (let i = 0; i < paragraphs.length; i++) {
+            const xmlPara = paragraphs[i];
+
+            // Extract text content for matching
+            const textNodes = xmlPara.getElementsByTagName("w:t");
+            let textContent = "";
+            for (let t = 0; t < textNodes.length; t++) {
+              textContent += textNodes[t].textContent;
+            }
+            textContent = textContent.trim().substring(0, 50); // First 50 chars for matching
+
+            // Look for indentation
+            const pPr = xmlPara.getElementsByTagName("w:pPr")[0];
+            let leftIndent = 0;
+            let resolvedBy = "";
+
+            if (pPr) {
+              const ind = pPr.getElementsByTagName("w:ind")[0];
+              if (ind) {
+                // Try all possible attribute names
+                const leftAttr =
+                  ind.getAttribute("w:left") ||
+                  ind.getAttribute("w:start") ||
+                  ind.getAttribute("left") ||
+                  ind.getAttribute("start");
+
+                // Debug: Log all attributes
+                if (i === 0) {
+                }
+
+                if (leftAttr) {
+                  leftIndent = parseInt(leftAttr);
+                  resolvedBy = "direct";
+                }
+              } else {
+                // Debug: Log if w:pPr exists but no w:ind
+                if (i === 0) {
+                }
+              }
+
+              // If no direct indent, try paragraph style
+              if (!leftIndent) {
+                const pStyle = pPr.getElementsByTagName("w:pStyle")[0];
+                const styleId = pStyle
+                  ? pStyle.getAttribute("w:val") || pStyle.getAttribute("val")
+                  : null;
+                if (styleId && styleIndentByStyleId[styleId]) {
+                  leftIndent = styleIndentByStyleId[styleId];
+                  resolvedBy = `style:${styleId}`;
+                }
+              }
+
+              // If still none, try numbering level indent
+              if (!leftIndent) {
+                const numPr = pPr.getElementsByTagName("w:numPr")[0];
+                if (numPr) {
+                  const numIdEl = numPr.getElementsByTagName("w:numId")[0];
+                  const ilvlEl = numPr.getElementsByTagName("w:ilvl")[0];
+                  const numId = numIdEl
+                    ? numIdEl.getAttribute("w:val") ||
+                      numIdEl.getAttribute("val")
+                    : null;
+                  const ilvl = ilvlEl
+                    ? ilvlEl.getAttribute("w:val") ||
+                      ilvlEl.getAttribute("val") ||
+                      "0"
+                    : "0";
+                  if (numId && numberingIndent[`${numId}:${ilvl}`]) {
+                    leftIndent = numberingIndent[`${numId}:${ilvl}`];
+                    resolvedBy = `numbering:${numId}:${ilvl}`;
+                  }
+                }
+              }
+            }
+
+            // Final fallback: infer indent from leading whitespace/tabs in runs
+            if (!leftIndent) {
+              let spaceCount = 0;
+              let tabCount = 0;
+              let reachedContent = false;
+              const runNodes = xmlPara.getElementsByTagName("w:r");
+              for (let r = 0; r < runNodes.length && !reachedContent; r++) {
+                const rNode = runNodes[r];
+                // Count tabs in this run
+                const tabNodes = rNode.getElementsByTagName("w:tab");
+                if (tabNodes && tabNodes.length > 0) {
+                  tabCount += tabNodes.length;
+                }
+                // Check text in this run
+                const tNodes = rNode.getElementsByTagName("w:t");
+                for (let ti = 0; ti < tNodes.length && !reachedContent; ti++) {
+                  const tNode = tNodes[ti];
+                  const text = tNode.textContent || "";
+                  if (text.length === 0) continue;
+                  // Count leading spaces until first non-space
+                  for (let c = 0; c < text.length; c++) {
+                    const ch = text[c];
+                    if (ch === " " || ch === "\u00A0") {
+                      spaceCount++;
+                    } else {
+                      reachedContent = true;
+                      break;
+                    }
+                  }
+                }
+              }
+              if (spaceCount > 0 || tabCount > 0) {
+                // Approximate: 1 tab = 36px, 1 space = 6px
+                const px = tabCount * 36 + spaceCount * 6;
+                leftIndent = px * 15; // convert to twips for consistency
+                resolvedBy = `whitespace tabs:${tabCount} spaces:${spaceCount}`;
+              }
+            }
+
+            if (leftIndent > 0) {
+              indentMap.push({
+                index: i,
+                textContent: textContent,
+                leftIndent: leftIndent,
+                resolvedBy,
+              });
+            }
+          }
+
+          // Apply indentation to rendered elements
+          let appliedCount = 0;
+
+          // Robust sequential matching: walk both XML paragraphs with indent and rendered elements
+          const renderedList = Array.from(renderedParagraphs);
+          let startIdx = 0;
+          indentMap.forEach((item) => {
+            const leftPx = twipsToPx(item.leftIndent);
+            const xmlText = (item.textContent || "")
+              .replace(/\s+/g, " ")
+              .trim();
+            let matched = false;
+            for (let r = startIdx; r < renderedList.length; r++) {
+              const el = renderedList[r];
+              const hasImg = !!el.querySelector && !!el.querySelector("img");
+              const elText = (el.textContent || "")
+                .substring(0, 50)
+                .replace(/\s+/g, " ")
+                .trim();
+              // Match: if XML has text, use text contains/equals; if XML likely image-only, prefer elements with image
+              const textMatch =
+                xmlText &&
+                elText &&
+                (elText.includes(xmlText) || xmlText.includes(elText));
+              const imageMatch = !xmlText && hasImg; // image paragraph in XML usually has no text
+              if (textMatch || imageMatch) {
+                try {
+                  el.style.setProperty(
+                    "margin-left",
+                    `${leftPx}px`,
+                    "important",
+                  );
+                  appliedCount++;
+                  startIdx = r + 1;
+                  matched = true;
+                } catch (_) {}
+                break;
+              }
+            }
+            if (!matched && item.index < renderedList.length) {
+              // Fallback: apply by index if available
+              const el = renderedList[item.index];
+              try {
+                el.style.setProperty("margin-left", `${leftPx}px`, "important");
+                appliedCount++;
+              } catch (_) {}
+            }
+          });
+
+          // Final fallback: elements with data attributes (if any)
+          const elementsWithData = editorContainer.querySelectorAll(
+            "[data-indent], [data-left-indent]",
+          );
+          elementsWithData.forEach((el) => {
+            const indent =
+              el.getAttribute("data-indent") ||
+              el.getAttribute("data-left-indent");
+            if (indent && parseInt(indent) > 0) {
+              const leftPx = twipsToPx(indent);
+              try {
+                el.style.setProperty("margin-left", `${leftPx}px`, "important");
+                appliedCount++;
+              } catch (_) {}
+            }
+          });
+        } catch (err) {}
+      }
+
+      // Called from Flutter
+      window.loadDocumentFromFlutter = async function (base64, fileType) {
+        try {
+          const arrayBuffer = base64ToArrayBuffer(base64);
+
+          if (fileType === "docx") {
+            await renderDocx(arrayBuffer);
+          } else if (fileType === "doc") {
+            // Legacy .doc files cannot be parsed client-side
+            editorContainer.innerHTML = `
+            <p style="color:red;">
+              ⚠️ This is an older .DOC file format (binary).
+              <br/>Please convert it to .DOCX to preview it here.
+            </p>
+          `;
+          } else {
+            editorContainer.innerHTML = `<p>Unsupported file type: ${fileType}</p>`;
+          }
+        } catch (err) {
+          console.error("loadDocumentFromFlutter error:", err);
+          editorContainer.innerHTML =
+            '<p style="color:red;">Error loading document.</p>';
+        }
+      };
+    </script>
+  </body>
+</html>
