@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as path;
 
 class UploadService {
   final Dio _dio = Dio();
@@ -10,7 +12,63 @@ class UploadService {
   static const String _uploadEndpoint = '/api/upload';
   static const String _documentEndpoint = '/api/documents';
 
-  /// Upload a file to the backend
+  /// Save document locally and prepare for upload
+  Future<Map<String, dynamic>> saveDocumentLocally({
+    required String filePath,
+    required String documentId,
+    Map<String, dynamic>? metadata,
+  }) async {
+    try {
+      final file = File(filePath);
+
+      // Check if file exists
+      if (!await file.exists()) {
+        throw Exception('File does not exist: $filePath');
+      }
+
+      // Get file details
+      final fileSize = await file.length();
+      final fileName = file.path.split('/').last;
+      final fileExtension = fileName.split('.').last;
+
+      // Create a copy in the app's document directory for backup
+      final appDir = await getApplicationDocumentsDirectory();
+      final backupDir = Directory(path.join(appDir.path, 'scanned_documents'));
+
+      // Create directory if it doesn't exist
+      if (!await backupDir.exists()) {
+        await backupDir.create(recursive: true);
+      }
+
+      // Create backup copy
+      final backupPath = path.join(
+        backupDir.path,
+        '${DateTime.now().millisecondsSinceEpoch}_$fileName',
+      );
+      await file.copy(backupPath);
+
+      // Return document info
+      return {
+        'success': true,
+        'message': 'Document saved locally',
+        'data': {
+          'originalPath': filePath,
+          'backupPath': backupPath,
+          'fileName': fileName,
+          'fileSize': fileSize,
+          'fileExtension': fileExtension,
+          'documentId': documentId,
+          'savedAt': DateTime.now().toIso8601String(),
+          'metadata': metadata ?? {},
+          'readyForUpload': true,
+        },
+      };
+    } catch (e) {
+      throw Exception('Failed to save document locally: $e');
+    }
+  }
+
+  /// Upload a file to the backend (Ready for future API integration)
   Future<Map<String, dynamic>> uploadFile({
     required String filePath,
     required String documentId,
@@ -19,6 +77,11 @@ class UploadService {
   }) async {
     try {
       final file = File(filePath);
+
+      if (!await file.exists()) {
+        throw Exception('File does not exist: $filePath');
+      }
+
       final fileName = file.path.split('/').last;
 
       // Create form data
@@ -74,7 +137,7 @@ class UploadService {
     // Return mock response
     return {
       'success': true,
-      'message': 'File uploaded successfully',
+      'message': 'File uploaded successfully (simulated)',
       'data': {
         'filePath': filePath,
         'documentId': documentId,
@@ -82,6 +145,7 @@ class UploadService {
         'uploadedAt': DateTime.now().toIso8601String(),
         'fileSize': await File(filePath).length(),
         'metadata': metadata ?? {},
+        'isSimulated': true,
       },
     };
   }
@@ -109,6 +173,54 @@ class UploadService {
         'createdAt': DateTime.now().toIso8601String(),
         'pages': 1,
       };
+    }
+  }
+
+  /// Get list of saved documents
+  Future<List<Map<String, dynamic>>> getSavedDocuments() async {
+    try {
+      final appDir = await getApplicationDocumentsDirectory();
+      final backupDir = Directory(path.join(appDir.path, 'scanned_documents'));
+
+      if (!await backupDir.exists()) {
+        return [];
+      }
+
+      final files = await backupDir.list().toList();
+      List<Map<String, dynamic>> documents = [];
+
+      for (var file in files) {
+        if (file is File && file.path.endsWith('.pdf')) {
+          final stat = await file.stat();
+          documents.add({
+            'path': file.path,
+            'fileName': file.path.split('/').last,
+            'size': stat.size,
+            'modifiedAt': stat.modified.toIso8601String(),
+          });
+        }
+      }
+
+      // Sort by modified date (newest first)
+      documents.sort((a, b) => b['modifiedAt'].compareTo(a['modifiedAt']));
+
+      return documents;
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /// Delete a saved document
+  Future<bool> deleteDocument(String filePath) async {
+    try {
+      final file = File(filePath);
+      if (await file.exists()) {
+        await file.delete();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
     }
   }
 }

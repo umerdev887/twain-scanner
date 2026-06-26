@@ -60,6 +60,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _showSnackBar('Found ${devices.length} scanner(s)');
       }
     } catch (e) {
+      debugPrint("listscanner $e");
       setState(() {
         _errorMessage = e.toString();
       });
@@ -153,39 +154,207 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     try {
-      // Prepare file for upload
+      // Get file details
       final fileSize = await _pdfService.getFileSize(_savedFilePath!);
+      final fileName = _savedFilePath!.split('/').last;
 
-      // Use simulation for testing (replace with actual upload when backend is ready)
-      final result = await _uploadService.simulateUpload(
+      // Step 1: Save document locally with metadata
+      final localSaveResult = await _uploadService.saveDocumentLocally(
         filePath: _savedFilePath!,
-        documentId: _currentDocumentId ?? 'unknown',
+        documentId:
+            _currentDocumentId ??
+            'local_' + DateTime.now().millisecondsSinceEpoch.toString(),
         metadata: {
           'pages': _images.length,
           'scanner': _selectedDevice?.name ?? 'Unknown',
           'timestamp': DateTime.now().toIso8601String(),
-        },
-        onProgress: (sent, total) {
-          // Update progress if needed
-          print('Upload progress: $sent/$total');
+          'fileSize': fileSize,
+          'fileName': fileName,
         },
       );
 
       if (!mounted) return;
 
-      setState(() {
-        _isUploading = false;
-      });
+      // Show local save success
+      _showSnackBar('📄 Document saved locally!', isError: false);
 
-      _showUploadSuccessDialog(result, fileSize);
+      // Step 2: Show upload options dialog
+      final shouldUpload = await _showUploadOptionsDialog(localSaveResult);
+
+      if (!mounted) return;
+
+      if (shouldUpload) {
+        // Step 3: Simulate upload (replace with actual API when ready)
+        final result = await _uploadService.simulateUpload(
+          filePath: _savedFilePath!,
+          documentId: _currentDocumentId ?? 'unknown',
+          metadata: {
+            'pages': _images.length,
+            'scanner': _selectedDevice?.name ?? 'Unknown',
+            'timestamp': DateTime.now().toIso8601String(),
+            'localPath': localSaveResult['data']['backupPath'],
+          },
+          onProgress: (sent, total) {
+            print('Upload progress: $sent/$total');
+          },
+        );
+
+        if (!mounted) return;
+
+        setState(() {
+          _isUploading = false;
+        });
+
+        _showUploadSuccessDialog(result, fileSize);
+      } else {
+        setState(() {
+          _isUploading = false;
+        });
+        _showSnackBar(
+          'Document saved locally. Ready for upload when needed.',
+          isError: false,
+        );
+      }
     } catch (e) {
       setState(() {
         _isUploading = false;
         _errorMessage = e.toString();
       });
-      _showSnackBar('Upload failed: ${e.toString()}');
+      _showSnackBar('Failed to save document: ${e.toString()}');
     }
   }
+
+  Future<bool> _showUploadOptionsDialog(
+    Map<String, dynamic> localSaveResult,
+  ) async {
+    final data = localSaveResult['data'];
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.save, color: Colors.green),
+                SizedBox(width: 8),
+                Text('Document Saved'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Document has been saved locally:',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.grey.shade300),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('📄 ${data['fileName']}'),
+                      const SizedBox(height: 4),
+                      Text(
+                        '📊 Size: ${(data['fileSize'] / 1024).toStringAsFixed(2)} KB',
+                      ),
+                      const SizedBox(height: 4),
+                      Text('📋 Document ID: ${data['documentId']}'),
+                      const SizedBox(height: 4),
+                      Text(
+                        '📅 Saved: ${DateTime.now().toLocal().toString().split('.')[0]}',
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.shade200),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.info_outline, color: Colors.blue, size: 20),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'The document is ready for upload when the backend API is available.',
+                          style: TextStyle(fontSize: 13),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Save Locally Only'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Upload Now'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  // Future<void> _uploadDocument() async {
+  //   if (_savedFilePath == null) {
+  //     _showSnackBar('Please save the document as PDF first');
+  //     return;
+  //   }
+
+  //   setState(() {
+  //     _isUploading = true;
+  //     _errorMessage = null;
+  //   });
+
+  //   try {
+  //     // Prepare file for upload
+  //     final fileSize = await _pdfService.getFileSize(_savedFilePath!);
+
+  //     // Use simulation for testing (replace with actual upload when backend is ready)
+  //     final result = await _uploadService.simulateUpload(
+  //       filePath: _savedFilePath!,
+  //       documentId: _currentDocumentId ?? 'unknown',
+  //       metadata: {
+  //         'pages': _images.length,
+  //         'scanner': _selectedDevice?.name ?? 'Unknown',
+  //         'timestamp': DateTime.now().toIso8601String(),
+  //       },
+  //       onProgress: (sent, total) {
+  //         // Update progress if needed
+  //         print('Upload progress: $sent/$total');
+  //       },
+  //     );
+
+  //     if (!mounted) return;
+
+  //     setState(() {
+  //       _isUploading = false;
+  //     });
+
+  //     _showUploadSuccessDialog(result, fileSize);
+  //   } catch (e) {
+  //     setState(() {
+  //       _isUploading = false;
+  //       _errorMessage = e.toString();
+  //     });
+  //     _showSnackBar('Upload failed: ${e.toString()}');
+  //   }
+  // }
 
   void _showUploadSuccessDialog(Map<String, dynamic> result, int fileSize) {
     showDialog(
@@ -365,6 +534,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 onScanDocument: _scanDocument,
                 onSavePdf: _savePdf,
                 onUpload: _uploadDocument,
+                onViewSaved: _viewSavedDocuments,
                 isScanning: _isScanning,
                 hasImages: _images.isNotEmpty,
                 isUploading: _isUploading,
@@ -1015,6 +1185,177 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(width: 8),
           Expanded(child: Text(text, style: const TextStyle(fontSize: 13))),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _viewSavedDocuments() async {
+    try {
+      final documents = await _uploadService.getSavedDocuments();
+
+      if (documents.isEmpty) {
+        _showSnackBar('No saved documents found', isError: false);
+        return;
+      }
+
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        builder: (context) => DraggableScrollableSheet(
+          initialChildSize: 0.7,
+          minChildSize: 0.4,
+          maxChildSize: 0.9,
+          expand: false,
+          builder: (context, scrollController) => Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).primaryColor,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(20),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Saved Documents',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: ListView.builder(
+                  controller: scrollController,
+                  padding: const EdgeInsets.all(8),
+                  itemCount: documents.length,
+                  itemBuilder: (context, index) {
+                    final doc = documents[index];
+                    return Card(
+                      margin: const EdgeInsets.symmetric(vertical: 4),
+                      child: ListTile(
+                        leading: const Icon(
+                          Icons.picture_as_pdf,
+                          color: Colors.red,
+                        ),
+                        title: Text(
+                          doc['fileName'],
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          'Size: ${(doc['size'] / 1024).toStringAsFixed(2)} KB\n'
+                          'Modified: ${doc['modifiedAt'].substring(0, 16)}',
+                        ),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete, color: Colors.red),
+                          onPressed: () async {
+                            final confirm = await showDialog<bool>(
+                              context: context,
+                              builder: (context) => AlertDialog(
+                                title: const Text('Delete Document'),
+                                content: Text('Delete ${doc['fileName']}?'),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.pop(context, false),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.pop(context, true),
+                                    child: const Text(
+                                      'Delete',
+                                      style: TextStyle(color: Colors.red),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (confirm == true) {
+                              await _uploadService.deleteDocument(doc['path']);
+                              _viewSavedDocuments(); // Refresh list
+                              _showSnackBar('Document deleted', isError: false);
+                            }
+                          },
+                        ),
+                        onTap: () {
+                          _showDocumentDetails(doc);
+                        },
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    } catch (e) {
+      _showSnackBar('Failed to load documents: $e');
+    }
+  }
+
+  void _showDocumentDetails(Map<String, dynamic> doc) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Document Details'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('📄 ${doc['fileName']}'),
+            const Divider(),
+            Text('📊 Size: ${(doc['size'] / 1024).toStringAsFixed(2)} KB'),
+            Text('📅 Modified: ${doc['modifiedAt']}'),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                'Path: ${doc['path']}',
+                style: const TextStyle(fontSize: 11),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.pop(context);
+              // You can add functionality to open the document
+              _showSnackBar(
+                'Open document feature coming soon',
+                isError: false,
+              );
+            },
+            icon: const Icon(Icons.open_in_new),
+            label: const Text('Open'),
+          ),
         ],
       ),
     );

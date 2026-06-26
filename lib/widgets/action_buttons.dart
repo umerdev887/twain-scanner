@@ -5,6 +5,7 @@ class ActionButtons extends StatelessWidget {
   final VoidCallback onScanDocument;
   final VoidCallback onSavePdf;
   final VoidCallback onUpload;
+  final VoidCallback onViewSaved;
   final bool isScanning;
   final bool hasImages;
   final bool isUploading;
@@ -15,6 +16,7 @@ class ActionButtons extends StatelessWidget {
     required this.onScanDocument,
     required this.onSavePdf,
     required this.onUpload,
+    required this.onViewSaved,
     this.isScanning = false,
     this.hasImages = false,
     this.isUploading = false,
@@ -76,6 +78,15 @@ class ActionButtons extends StatelessWidget {
           label: Text(isUploading ? 'Uploading...' : 'Upload'),
           style: ElevatedButton.styleFrom(
             backgroundColor: hasImages ? Colors.purple : Colors.grey,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          ),
+        ),
+        ElevatedButton.icon(
+          onPressed: onViewSaved,
+          icon: const Icon(Icons.folder_open),
+          label: const Text('Saved Files'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.orange,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           ),
         ),
